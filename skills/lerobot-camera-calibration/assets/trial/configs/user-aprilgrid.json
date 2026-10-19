@@ -1,0 +1,10 @@
+{
+  "type": "aprilgrid",
+  "tags": [8, 11],
+  "tag_size_m": 0.049,
+  "tag_gap_m": 0.012,
+  "first_id": 3,
+  "id_order": "column-major",
+  "tag_rotation_ccw": 1,
+  "dictionary": "DICT_APRILTAG_36h11"
+}

@@ -1,0 +1,248 @@
+diff --git a/scripts/cw_handeye_debug.py b/scripts/cw_handeye_debug.py
+index 81a53dd..9a32a96 100644
+--- a/scripts/cw_handeye_debug.py
++++ b/scripts/cw_handeye_debug.py
+@@ -139,6 +139,11 @@ def _mean_transform(transforms: Sequence[np.ndarray]) -> np.ndarray:
+ 
+ def board_spec_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+     """Board spec dict in the shape the driver's start command carries."""
++    if getattr(args, "board_config", None):
++        spec = json.loads(Path(args.board_config).read_text())
++        if not isinstance(spec, dict) or not spec.get("type"):
++            raise ValueError("--board-config must contain a board object with explicit type")
++        return spec
+     if args.board_type in {"checker", "checkerboard"}:
+         return {
+             "type": "checkerboard",
+@@ -756,7 +761,7 @@ def cmd_board(args: argparse.Namespace) -> int:
+     board = build_board(spec)
+     if not hasattr(board, "generate_image"):
+         raise SystemExit(
+-            "Only charuco boards can be rendered. A checkerboard prints from anywhere; "
++            "Only charuco and aprilgrid boards can be rendered. A checkerboard prints from anywhere; "
+             "just confirm --inner-corners counts *interior* corners, not squares."
+         )
+     image = board.generate_image(args.pixels_per_square)
+@@ -765,6 +770,10 @@ def cmd_board(args: argparse.Namespace) -> int:
+     cv2.imwrite(str(out), image)
+     print(json.dumps(board.to_metadata(), indent=2))
+     print(f"\nwrote {out}")
++    if spec["type"] == "aprilgrid":
++        print("Compare IDs and code orientations with the physical board. PNG print scale is not guaranteed.")
++        print("Use measured tag_size_m and tag_gap_m in the board config.")
++        return 0
+     print(
+         "Hold this against the print. If the markers differ, --dictionary is wrong and "
+         "nothing will ever be detected. Then measure a few squares with calipers and "
+@@ -1039,6 +1048,8 @@ def synthetic_camera_to_target(board: Any, index: int, distance_m: float) -> np.
+ 
+ def board_extent_m(board: Any) -> Tuple[float, float]:
+     """Printed ``(width, height)`` of the board, in metres."""
++    if hasattr(board, "extent_m"):
++        return board.extent_m
+     if hasattr(board, "squares"):
+         cols, rows = board.squares
+     else:
+@@ -1067,12 +1078,17 @@ def render_board_view(
+     import cv2
+     from cyberwave.calibration.board import camera_matrix
+ 
+-    scale = pixels_per_square / board.square_size_m
+     width_m, height_m = board_extent_m(board)
+     plane = np.array(
+         [[0.0, 0.0], [width_m, 0.0], [width_m, height_m], [0.0, height_m]], dtype=float
+     )
+-    source = (plane * scale - 0.5).astype(np.float32)
++    if hasattr(board, "extent_m"):
++        height, width = board_image.shape[:2]
++        source = np.array([[-0.5, -0.5], [width - 0.5, -0.5],
++                           [width - 0.5, height - 0.5], [-0.5, height - 0.5]], dtype=np.float32)
++    else:
++        scale = pixels_per_square / board.square_size_m
++        source = (plane * scale - 0.5).astype(np.float32)
+ 
+     points = np.c_[plane, np.zeros(len(plane))]
+     in_camera = (camera_to_target[:3, :3] @ points.T).T + camera_to_target[:3, 3]
+@@ -1121,7 +1137,7 @@ def cmd_selftest(args: argparse.Namespace) -> int:
+     spec = board_spec_from_args(args)
+     board = build_board(spec)
+     if not hasattr(board, "generate_image"):
+-        raise SystemExit("selftest renders charuco boards only.")
++        raise SystemExit("selftest renders charuco and aprilgrid boards only.")
+     board_image = board.generate_image(args.pixels_per_square)
+ 
+     frame_shape = (720, 1280)
+@@ -1514,6 +1530,8 @@ def cmd_solve(args: argparse.Namespace) -> int:
+ 
+ 
+ def add_board_args(parser: argparse.ArgumentParser) -> None:
++    parser.add_argument("--board-config", type=Path,
++                        help="board JSON file; overrides individual board flags (supports AprilGrid)")
+     parser.add_argument("--board-type", choices=("charuco", "checkerboard"), default="charuco")
+     parser.add_argument(
+         "--squares",
+diff --git a/utils/cw_aprilgrid.py b/utils/cw_aprilgrid.py
+new file mode 100644
+index 0000000..93c4133
+--- /dev/null
++++ b/utils/cw_aprilgrid.py
+@@ -0,0 +1,120 @@
++"""AprilGrid adapter for the local calibration trial; no device access.
++
++Board X goes right and Y goes down in the configured grid; Z completes the
++right-handed frame. Marker corners remain in decoded canonical order, including
++when the printed codes are rotated relative to the grid. All lengths are metres.
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from math import isfinite
++from typing import Any
++
++import numpy as np
++
++
++@dataclass(frozen=True)
++class AprilGridBoard:
++    tags: tuple[int, int]
++    tag_size_m: float
++    tag_gap_m: float
++    first_id: int
++    id_order: str
++    tag_rotation_ccw: int
++    dictionary: str = "DICT_APRILTAG_36h11"
++
++    def __post_init__(self) -> None:
++        if len(self.tags) != 2 or any(type(v) is not int or v < 1 for v in self.tags):
++            raise ValueError("tags must contain positive integer (columns, rows)")
++        if not isfinite(self.tag_size_m) or self.tag_size_m <= 0:
++            raise ValueError("tag_size_m must be a measured positive length")
++        if not isfinite(self.tag_gap_m) or self.tag_gap_m <= 0:
++            raise ValueError("tag_gap_m must be a measured positive white gap")
++        if type(self.first_id) is not int or self.first_id < 0:
++            raise ValueError("first_id must be a nonnegative integer")
++        if self.id_order not in {"row-major", "column-major"}:
++            raise ValueError("id_order must be row-major or column-major")
++        if type(self.tag_rotation_ccw) is not int or self.tag_rotation_ccw not in range(4):
++            raise ValueError("tag_rotation_ccw must be 0, 1, 2 or 3 quarter turns")
++        if not self.dictionary.startswith("DICT_APRILTAG_"):
++            raise ValueError("AprilGrid requires an explicit AprilTag dictionary")
++
++    def to_metadata(self) -> dict[str, Any]:
++        return {
++            "type": "aprilgrid",
++            "tags": list(self.tags),
++            "tag_size_m": self.tag_size_m,
++            "tag_gap_m": self.tag_gap_m,
++            "first_id": self.first_id,
++            "id_order": self.id_order,
++            "tag_rotation_ccw": self.tag_rotation_ccw,
++            "dictionary": self.dictionary,
++        }
++
++    @property
++    def extent_m(self) -> tuple[float, float]:
++        return tuple(n * self.tag_size_m + (n - 1) * self.tag_gap_m for n in self.tags)
++
++    def _dictionary(self, cv2: Any) -> Any:
++        from cyberwave.calibration.board import resolve_dictionary
++
++        dictionary = resolve_dictionary(cv2, self.dictionary)
++        if self.first_id + self.tags[0] * self.tags[1] > len(dictionary.bytesList):
++            raise ValueError("AprilGrid tag IDs exceed the dictionary size")
++        return dictionary
++
++    def _layout(self):
++        cols, rows = self.tags
++        pitch = self.tag_size_m + self.tag_gap_m
++        # Canonical marker corners are TL, TR, BR, BL before the print rotation.
++        unit = np.array([[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]], dtype=float)
++        corners = np.roll(unit, self.tag_rotation_ccw, axis=0) * self.tag_size_m
++        for row in range(rows):
++            for col in range(cols):
++                offset = row * cols + col if self.id_order == "row-major" else col * rows + row
++                yield self.first_id + offset, row, col, corners + [col * pitch, row * pitch, 0]
++
++    def detect(self, cv2: Any, image: np.ndarray, *, minimum: int = 6):
++        parameters = cv2.aruco.DetectorParameters()
++        parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
++        detector = cv2.aruco.ArucoDetector(self._dictionary(cv2), parameters)
++        corners, ids, _rejected = detector.detectMarkers(np.asarray(image))
++        if ids is None:
++            return None
++        layout = {tag_id: points for tag_id, _r, _c, points in self._layout()}
++        objects, pixels, seen = [], [], set()
++        for tag_id, points in zip(ids.ravel(), corners):
++            tag_id = int(tag_id)
++            if tag_id not in layout:
++                continue
++            if tag_id in seen:
++                return None  # Two physical copies of the same ID are ambiguous.
++            seen.add(tag_id)
++            objects.append(layout[tag_id])
++            pixels.append(np.asarray(points, dtype=float).reshape(4, 2))
++        if 4 * len(objects) < max(int(minimum), 1):
++            return None
++        return ((np.concatenate(objects), np.concatenate(pixels)), len(seen))
++
++    def correspondences(self, cv2: Any, image: np.ndarray, *, minimum: int = 6):
++        detection = self.detect(cv2, image, minimum=minimum)
++        return None if detection is None else detection[0]
++
++    def generate_image(self, pixels_per_square: int = 200) -> np.ndarray:
++        """Render for inspection/selftest; PNG carries no reliable print scale."""
++        import cv2
++
++        if pixels_per_square < 32:
++            raise ValueError("Use at least 32 pixels per tag")
++        scale = pixels_per_square / self.tag_size_m
++        width, height = (round(v * scale) for v in self.extent_m)
++        image = np.full((height, width), 255, dtype=np.uint8)
++        dictionary = self._dictionary(cv2)
++        pitch_px = (self.tag_size_m + self.tag_gap_m) * scale
++        for tag_id, row, col, _points in self._layout():
++            tag = cv2.aruco.generateImageMarker(dictionary, tag_id, pixels_per_square)
++            tag = np.rot90(tag, self.tag_rotation_ccw)
++            x, y = round(col * pitch_px), round(row * pitch_px)
++            image[y:y + pixels_per_square, x:x + pixels_per_square] = tag
++        return image
+diff --git a/utils/cw_handeye.py b/utils/cw_handeye.py
+index 04c526c..0143a52 100644
+--- a/utils/cw_handeye.py
++++ b/utils/cw_handeye.py
+@@ -151,7 +151,7 @@ def assert_constants_match_sdk() -> None:
+ 
+ 
+ def board_from_spec(spec: Optional[Dict[str, Any]]) -> Any:
+-    """Build a ``CharucoBoard`` / ``CheckerBoard`` from a plain dict.
++    """Build a ChArUco, checkerboard or AprilGrid target from a plain dict.
+ 
+     The spec comes off the start command so the UI can offer board settings later
+     without an edge change; missing keys fall back to :data:`_DEFAULT_BOARD`.
+@@ -160,6 +160,25 @@ def board_from_spec(spec: Optional[Dict[str, Any]]) -> Any:
+ 
+     merged = {**_DEFAULT_BOARD, **(spec or {})}
+     board_type = str(merged.get("type") or "charuco").lower()
++    if board_type == "aprilgrid":
++        from utils.cw_aprilgrid import AprilGridBoard
++
++        # No dimensions, ID layout or rotations are borrowed from the ChArUco
++        # default. A plausible but wrong board silently corrupts metric poses.
++        required = ("tags", "tag_size_m", "tag_gap_m", "first_id", "id_order", "tag_rotation_ccw", "dictionary")
++        if not spec or any(key not in spec or spec[key] is None for key in required):
++            raise ValueError(f"AprilGrid requires explicit measured/configured fields: {required}")
++        return AprilGridBoard(
++            tags=tuple(spec["tags"]),
++            tag_size_m=float(spec["tag_size_m"]),
++            tag_gap_m=float(spec["tag_gap_m"]),
++            first_id=spec["first_id"],
++            id_order=str(spec["id_order"]),
++            tag_rotation_ccw=spec["tag_rotation_ccw"],
++            dictionary=str(spec["dictionary"]),
++        )
++    if board_type not in {"charuco", "checker", "checkerboard"}:
++        raise ValueError(f"Unsupported calibration board type: {board_type!r}")
+     square_size_m = float(merged["square_size_m"])
+ 
+     if board_type in {"checker", "checkerboard"}:

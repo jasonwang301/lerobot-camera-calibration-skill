@@ -1,0 +1,37 @@
+diff --git a/scripts/cw_handeye_debug.py b/scripts/cw_handeye_debug.py
+index 49127be..81a53dd 100644
+--- a/scripts/cw_handeye_debug.py
++++ b/scripts/cw_handeye_debug.py
+@@ -681,7 +681,22 @@ def sensor_offset_from_arg(value: Optional[str]) -> np.ndarray:
+ 
+ def report(results: Dict[str, Any], default: str) -> None:
+     """Print the summary a human reads before opening any JSON."""
+-    from utils.cw_handeye import _verdict
++    from types import SimpleNamespace
++
++    from cyberwave.calibration.presentation import verdict
++    from utils.cw_handeye import (
++        HANDEYE_BAD_STABILITY_M,
++        HANDEYE_GOOD_RESIDUAL_M,
++        HANDEYE_GOOD_STABILITY_M,
++    )
++
++    # The SDK owns the verdict now. Offline reports only need these thresholds,
++    # so they do not construct a hardware flow or require platform twin IDs.
++    quality_config = SimpleNamespace(
++        good_residual_m=HANDEYE_GOOD_RESIDUAL_M,
++        good_stability_m=HANDEYE_GOOD_STABILITY_M,
++        bad_stability_m=HANDEYE_BAD_STABILITY_M,
++    )
+ 
+     print("\n=== solve ===")
+     for method in sorted(results):
+@@ -704,7 +719,7 @@ def report(results: Dict[str, Any], default: str) -> None:
+             f"(max {data['max_residual_translation_m'] * 1000:7.2f}) / "
+             f"{data['residual_rotation_deg']:6.3f} deg   "
+             + stability_text
+-            + f"verdict {_verdict(data['residual_translation_m'], stability_m)}"
++            + f"verdict {verdict(data['residual_translation_m'], stability_m, config=quality_config)}"
+         )
+ 
+     print(

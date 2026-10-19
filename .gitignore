@@ -1,0 +1,14 @@
+**/.venv/
+**/.cache/
+**/.bootstrap-cache/
+**/__pycache__/
+**/*.pyc
+**/.ssh-known-hosts
+**/.env
+**/wheelhouse/
+**/cyberwave-edge-so101/
+**/runs/
+**/artifacts/
+**/install-report.json
+**/references/local-project.md
+.DS_Store

@@ -1,0 +1,8 @@
+{
+  "source_url": "https://storage.googleapis.com/cyberwave-downloads-cyberwave-os-production/media/urdf_projects/so101_new_caliburdf-2/upload.zip",
+  "archive_bytes": 5978868,
+  "archive_sha256": "17e5bf539ab83c9b875c6671f1e66f707b0ab7d4e8856af6727914f206834014",
+  "urdf_sha256": "c0b37ab473f22878c30da16b693291cb90439316efd21c95a18f55b1bd3bca33",
+  "archive_member": "SO101/so101_new_calib.urdf",
+  "note": "Only the URDF is saved; meshes are not needed for forward kinematics."
+}

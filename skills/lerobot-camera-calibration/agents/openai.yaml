@@ -1,0 +1,3 @@
+interface:
+  display_name: "LeRobot 相机标定"
+  short_description: "SO-ARM101 双 USB 相机内参、镜头畸变与手眼外参标定及验证"
